@@ -1,0 +1,162 @@
+#!/usr/bin/python
+
+"""
+Step to compress a file using Huffman coding
+We need to optimize it so it does not use so much RAM
+
+1) Get the frequencies dictionnary
+2) Build the huffman tree
+3) Find the binary code dictionnary to map each character
+4) Convert each character into it's corresponding code
+KEEP ATTENTION TO BITS PADDING
+"""
+
+"""
+Step for extraction
+
+0) Build the huffman codings from somewhere (file, headers, ...)
+1) Get bytes from the compressed file
+2) Regulate the paddings
+3) Convert bytes into binary
+4) Read binary from the huffman codings
+"""
+
+
+
+
+import json
+import sys
+def get_freq(path):
+    frequencies = {}
+    with open(path, "r+") as file:
+        while (char := file.read(1)):
+            if char not in frequencies:
+                frequencies[char] = 0
+            frequencies[char] += 1
+    return frequencies
+
+
+def huffman_tree(frequencies):
+    """
+    Heap structure:
+    {root : (parent, left, right, char,  freq)}
+    """
+    heap = {}
+    for char, frq in frequencies.items():
+        heap[char] = (None, None, None, char,  frq)
+
+    while len(heap) > 1:
+        min1_key, min1 = min(heap.items(), key=lambda x: x[1][4])
+        heap.pop(min1_key)
+        min2_key, min2 = min(heap.items(), key=lambda x: x[1][4])
+        heap.pop(min2_key)
+
+        merged = (None, {min1_key: min1}, {
+                  min2_key: min2}, None, min1[4]+min2[4])
+        heap[min1_key + min2_key] = merged
+
+    return heap
+
+
+def huffman_codes(heap):
+    root = list(heap.keys())[0]
+    codes = {}
+
+    def traverse(node, heap, code=""):
+        parent, left_heap, right_heap, char, freq = heap[node]
+
+        if char != None:
+            codes[char] = code
+            return
+
+        if left_heap:
+            left_node = list(left_heap.keys())[0]
+            traverse(left_node, left_heap, code+"0")
+        if right_heap:
+            right_node = list(right_heap.keys())[0]
+            traverse(right_node, right_heap, code+"1")
+
+    traverse(root, heap)
+    return codes
+
+
+# Write bytes into the binary compressed file
+def write_bytes(path, codebook, output=None):
+    outputfile = f"{path}.cpd.bin"
+    if output != None:
+        outputfile = f"{output}.cpd.bin"
+
+    bin_code = ""
+    len_bin = 0
+    with open(path, "r+") as file:
+        while char := file.read(1):
+            bin_code += codebook[char]
+            len_bin += 1
+
+    padding_size = 8 - len_bin % 8
+    bin_code += "0"*padding_size
+
+    byte_array = bytearray()
+    with open(outputfile, "wb") as out_file:
+        # Write the encodings at the top of the file before compression process
+        encodings = json.dumps(codebook).encode("utf-8")
+        out_file.write(len(encodings).to_bytes(4, "big"))
+        out_file.write(encodings)
+
+        # Write the padding size before everything
+        out_file.write(bytes([padding_size]))
+        for i in range(0, len(bin_code), 8):
+            bits = bin_code[i:i+8]
+            byte = int(bits, 2)
+            byte_array.append(byte)
+        out_file.write(byte_array)
+
+
+def compress(path, output=None):
+    frequencies = get_freq(path)
+    heap = huffman_tree(frequencies)
+    codes = huffman_codes(heap)
+
+    if output:
+        write_bytes(path,  codes, output)
+    else:
+        write_bytes(path, codes)
+
+
+def extract(path, output):
+    # Get bytes from the compressed file
+    with open(path, "rb") as cprsd:
+        encodings_length = int.from_bytes(cprsd.read(4), "big")
+        encodings_data = cprsd.read(encodings_length)
+
+        encodings = json.loads(encodings_data.decode("utf-8"))
+        padding_size = int.from_bytes(cprsd.read(1))
+
+        # Convert from binary to text
+        reverse_codings = {v: k for k, v in encodings.items()}
+
+        with open(output, "a+") as output_file:
+            bits = ""
+            while byte := cprsd.read(1):
+                bin_byte = f'{byte[0]:08b}'
+                for bit in bin_byte:
+                    bits += bit
+                    if bits in reverse_codings:
+                        output_file.write(reverse_codings[bits])
+                        bits = ""
+
+
+if __name__ == "__main__":
+    opt = sys.argv[1]  # -c | -h | -x
+    path = sys.argv[2]
+
+    # Compression
+    if opt == "-c":
+        if len(sys.argv) == 4:
+            compress(path, output=sys.argv[3])
+        else:
+            compress(path)
+
+    # Extraction
+    elif opt == "-x":
+        extract(path, sys.argv[3])
