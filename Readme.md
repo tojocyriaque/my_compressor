@@ -1,1 +1,0 @@
-Implementing Huffman codings compression in python
